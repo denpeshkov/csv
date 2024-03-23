@@ -3,6 +3,7 @@
 package csv
 
 import (
+	"io"
 	"strings"
 	"testing"
 
@@ -230,46 +231,43 @@ x,,,
 	Name:   "EvenQuotes",
 	Input:  `""""""""`,
 	Output: [][]string{{`"""`}},
-},
-	// Errors
-	{
-		Name:  "BadDoubleQuotes",
-		Input: `a""b,c`,
-		Err:   ErrBareQuote,
-	}, {
-		Name:  "BadBareQuote",
-		Input: `a "word","b"`,
-		Err:   ErrBareQuote,
-	}, {
-		Name:  "BadTrailingQuote",
-		Input: `"a word",b"`,
-		Err:   ErrBareQuote,
-	}, {
-		Name:  "ExtraneousQuote",
-		Input: `"a "word","b"`,
-		Err:   ErrQuote,
-	}, {
-		Name:  "StartLine1", // Issue 19019
-		Input: "a,\"b\nc\"d,e",
-		Err:   ErrQuote,
-	}, {
-		Name:   "StartLine2",
-		Input:  "a,b\n\"d\n\n,e",
-		Err:    ErrQuote,
-		Output: [][]string{{"a", "b"}},
-	}, {
-		Name:   "QuotedTrailingCRCR",
-		Input:  "\"field\"\r\r",
-		Output: [][]string{{"field"}},
-	}, {
-		Name:  "QuoteWithTrailingCRLF",
-		Input: "\"foo\"bar\"\r\n",
-		Err:   ErrQuote,
-	}, {
-		Name:  "OddQuotes",
-		Input: `"""""""`,
-		Err:   ErrQuote,
-	}}
+}, {
+	Name:   "QuotedTrailingCRCR",
+	Input:  "\"field\"\r\r",
+	Output: [][]string{{"field"}},
+}, {
+	Name:  "BadDoubleQuotes",
+	Input: `a""b,c`,
+	Err:   ErrBareQuote,
+}, {
+	Name:  "BadBareQuote",
+	Input: `a "word","b"`,
+	Err:   ErrBareQuote,
+}, {
+	Name:  "BadTrailingQuote",
+	Input: `"a word",b"`,
+	Err:   ErrBareQuote,
+}, {
+	Name:  "ExtraneousQuote",
+	Input: `"a "word","b"`,
+	Err:   ErrQuote,
+}, {
+	Name:  "StartLine1", // Issue 19019
+	Input: "a,\"b\nc\"d,e",
+	Err:   ErrQuote,
+}, {
+	Name:  "StartLine2",
+	Input: "a,b\n\"d\n\n,e",
+	Err:   ErrQuote,
+}, {
+	Name:  "QuoteWithTrailingCRLF",
+	Input: "\"foo\"bar\"\r\n",
+	Err:   ErrQuote,
+}, {
+	Name:  "OddQuotes",
+	Input: `"""""""`,
+	Err:   ErrQuote,
+}}
 
 func TestRead(t *testing.T) {
 	newReader := func(tt readTest) (*Reader, string) {
@@ -304,4 +302,70 @@ func TestRead(t *testing.T) {
 			}
 		})
 	}
+}
+
+// nTimes is an io.Reader which yields the string s n times.
+type nTimes struct {
+	s   string
+	n   int
+	off int
+}
+
+func (r *nTimes) Read(p []byte) (n int, err error) {
+	for {
+		if r.n <= 0 || r.s == "" {
+			return n, io.EOF
+		}
+		n0 := copy(p, r.s[r.off:])
+		p = p[n0:]
+		n += n0
+		r.off += n0
+		if r.off == len(r.s) {
+			r.off = 0
+			r.n--
+		}
+		if len(p) == 0 {
+			return
+		}
+	}
+}
+
+// benchmarkRead measures reading the provided CSV rows data.
+func benchmarkRead(b *testing.B, rows string) {
+	b.ReportAllocs()
+	r := NewReader(&nTimes{s: rows, n: b.N})
+
+	for {
+		_, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+const benchmarkCSVData = `x,y,z,w
+x,y,z,
+x,y,,
+x,,,
+,,,
+"x","y","z","w"
+"x","y","z",""
+"x","y","",""
+"x","","",""
+"","","",""
+`
+
+func BenchmarkRead(b *testing.B) {
+	benchmarkRead(b, benchmarkCSVData)
+}
+
+func BenchmarkReadLargeFields(b *testing.B) {
+	benchmarkRead(b, strings.Repeat(`xxxxxxxxxxxxxxxx,yyyyyyyyyyyyyyyy,zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz,wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww,vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+xxxxxxxxxxxxxxxxxxxxxxxx,yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz,wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww,vvvv
+,,zzzz,wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww,vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz,wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww,vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+`, 3))
 }

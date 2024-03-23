@@ -93,6 +93,10 @@ func (r *Reader) Read() (record []string, err error) {
 	}
 	record = r.record
 	err = r.err
+	// EOF on next read to return nil record
+	if len(record) != 0 && err == io.EOF {
+		err = nil
+	}
 
 	r.field.Reset()
 	r.err = nil
@@ -105,17 +109,16 @@ func (r *Reader) ReadAll() (records [][]string, err error) {
 	var record []string
 	for {
 		record, err = r.Read()
+		if err == io.EOF {
+			return records, nil
+		}
 		if err != nil {
-			break
+			return nil, err
 		}
 		if record != nil {
 			records = append(records, record)
 		}
-		if _, err := r.r.Peek(1); err == io.EOF {
-			break
-		}
 	}
-	return records, err
 }
 
 // next returns the next rune in the input.
@@ -135,12 +138,9 @@ func (r *Reader) backup() error {
 	return r.r.UnreadRune()
 }
 
-// write appends one rune to the current field.
-func (r *Reader) write(rune rune) error {
-	if _, err := r.field.WriteRune(rune); err != nil {
-		return err
-	}
-	return nil
+// appendRune appends one rune to the current field.
+func (r *Reader) appendRune(rn rune) {
+	r.field.WriteRune(rn)
 }
 
 // endField takes the current field, adds it to the current record and clears the current field so parsing can continue.
